@@ -400,6 +400,12 @@ export interface AuthStatus {
   project_roles?: Record<string, ProjectRole>;
 }
 
+/** A draft's scheduled publication (backend services/scheduled_publish.py). */
+export interface PageSchedule {
+  publish_at: string;
+  scheduled_by: string;
+}
+
 /** One entry of the admin log (backend services/admin_log.py). */
 export interface AdminLogEntry {
   id: number;
@@ -1108,6 +1114,15 @@ export const api = {
       `/api/admin/import?${new URLSearchParams({ ...target, filename: file.name }).toString()}`,
       file,
     ),
+  adminPageSchedule: (pageId: number) =>
+    request<{ schedule: PageSchedule | null }>(`/api/admin/pages/${pageId}/schedule`),
+  adminSetPageSchedule: (pageId: number, publishAt: string) =>
+    request<{ schedule: PageSchedule }>(`/api/admin/pages/${pageId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ publish_at: publishAt }),
+    }),
+  adminCancelPageSchedule: (pageId: number) =>
+    request<{ cancelled: boolean }>(`/api/admin/pages/${pageId}/schedule`, { method: "DELETE" }),
   adminLog: (limit = 100, before?: number) =>
     request<{ entries: AdminLogEntry[] }>(`/api/admin/log?limit=${limit}${before ? `&before=${before}` : ""}`),
   adminActivity: (limit = 50) => request<{ entries: ActivityEntry[] }>(`/api/admin/activity?limit=${limit}`),
