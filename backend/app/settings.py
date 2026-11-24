@@ -165,6 +165,12 @@ class Settings:
     # SMTP_HOST=169.254.1.2, SMTP_TLS_SERVER_NAME=mail.example.com).
     smtp_tls_server_name: str = os.environ.get("SMTP_TLS_SERVER_NAME", "").strip()
 
+    # A public demo (services/demo.py, deploy/demo/): the login below is shown
+    # on the sign-in page, and what a visitor could misuse is switched off.
+    demo_mode: bool = os.environ.get("DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+    demo_username: str = os.environ.get("DEMO_USERNAME", "demo").strip()
+    demo_password: str = os.environ.get("DEMO_PASSWORD", "").strip()
+
     session_cookie_secure: bool = _cookie_secure(
         os.environ.get("SESSION_COOKIE_SECURE", ""), os.environ.get("PUBLIC_BASE_URL", "")
     )
