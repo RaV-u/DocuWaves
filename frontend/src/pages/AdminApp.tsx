@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { contentPath, parseContentPath } from "@/pages/admin/contentPath";
+import { Link, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { toast } from "sonner";
-import { Moon, Sun, Menu, X } from "lucide-react";
+import { ChevronRight, Moon, Sun, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AdminInsightsCard } from "@/components/AdminInsightsCard";
 import { AdminDiagnosticsCard } from "@/components/AdminDiagnosticsCard";
@@ -97,6 +98,70 @@ export function AdminApp() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [panel, navigate]);
+  // The selection lives in the address too, so a reload, a bookmark or a
+  // link sent to a colleague opens the same place:
+  //   /admin/content/<project>/<category>?page=<slug>&lang=<code>
+  // Read once on arrival (`restore`, consumed as the lists load), and
+  // written back whenever the selection moves, one history entry per step,
+  // so Back and Forward walk through what was opened.
+  const restore = useRef(isContent ? parseContentPath(location.pathname, location.search) : null);
+  // The selected project's documentation versions, and which one is shown
+  // (explained where they are loaded, below).
+  const [versions, setVersions] = useState<AdminVersions | null>(null);
+  const [viewing, setViewing] = useState("");
+  const navigationType = useNavigationType();
+  useEffect(() => {
+    if (!isContent) return;
+    if (restore.current && restore.current.project) return; // still arriving
+    const target = contentPath(selectedProject?.slug, selectedCategory?.slug, editing);
+    const here = location.pathname.replace(/\/+$/, "") + location.search;
+    if (target === here) return;
+    navigate(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isContent, selectedProject, selectedCategory, editing]);
+
+  // The address moved without the selection (Back, Forward, the nav link):
+  // the selection follows it. The bare /admin/content of the nav link is the
+  // exception -- it means "the content", so the current selection is kept and
+  // the address completed in place.
+  useEffect(() => {
+    if (!isContent) return;
+    const here = location.pathname.replace(/\/+$/, "") + location.search;
+    const target = contentPath(selectedProject?.slug, selectedCategory?.slug, editing);
+    if (here === target || projects.length === 0) return;
+    if (here === "/admin/content") {
+      navigate(target, { replace: true });
+      return;
+    }
+    // Only Back and Forward. A move this component made itself is a PUSH,
+    // and several can be in flight at once (a save turns "new page" into the
+    // page's own address): reacting to an older one of those would undo
+    // the newer selection.
+    if (navigationType !== "POP") return;
+    const want = parseContentPath(location.pathname, location.search);
+    const project = want && projects.find((p) => p.slug === want.project);
+    if (!want || !project) return;
+    if (project.id !== selectedProject?.id) {
+      restore.current = want;
+      setEditing(null);
+      setSelectedCategory(null);
+      setSelectedProject(project);
+      return;
+    }
+    const category = categories.find((c) => c.slug === want.category) ?? null;
+    if (want.category && !category && selectedProject && versions) {
+      // Not in the list this render holds (it may be reloading): ask for it
+      // again and let the answer pick the category up, as on arrival.
+      restore.current = want;
+      loadCategories(selectedProject.id, viewing);
+      return;
+    }
+    setSelectedCategory(category);
+    setEditing(
+      category && want.page ? { kind: "page", slug: want.page, language: want.lang || site.default_language } : null,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search]);
   const [reviewCount, setReviewCount] = useState(0);
   const [reviewsKey, setReviewsKey] = useState(0);
   /** A queue entry being opened: the project, then the category, then the
@@ -109,8 +174,6 @@ export function AdminApp() {
   // one the editor writes to, and the project directory itself while the
   // project has no versions at all, where every panel behaves exactly as it
   // did before versions existed.
-  const [versions, setVersions] = useState<AdminVersions | null>(null);
-  const [viewing, setViewing] = useState("");
   const [showVersions, setShowVersions] = useState(false);
   const [showSnippets, setShowSnippets] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
@@ -225,6 +288,16 @@ export function AdminApp() {
   function loadProjects(selectSlug?: string) {
     api.adminListProjects().then((r) => {
       setProjects(r.projects);
+      const wanted = restore.current?.project;
+      if (wanted) {
+        const project = r.projects.find((p) => p.slug === wanted);
+        if (project) {
+          setSelectedProject(project);
+          if (!restore.current?.category) restore.current = null;
+          return;
+        }
+        restore.current = null;
+      }
       setSelectedProject((current) => {
         if (!current) return null;
         const wanted = selectSlug ?? current.slug;
@@ -240,6 +313,16 @@ export function AdminApp() {
     // the new slug.
     api.adminListCategories(projectId, version || undefined).then((r) => {
       setCategories(r.categories);
+      const arriving = restore.current;
+      if (arriving?.category) {
+        restore.current = null;
+        const category = r.categories.find((c) => c.slug === arriving.category);
+        setSelectedCategory(category ?? null);
+        if (category && arriving.page) {
+          setEditing({ kind: "page", slug: arriving.page, language: arriving.lang || site.default_language });
+        }
+        return;
+      }
       setSelectedCategory((current) => {
         if (!current) return null;
         const wanted = selectSlug ?? current.slug;
@@ -426,6 +509,60 @@ export function AdminApp() {
         )}
 
         <RepoStatusBar status={repoStatus} syncing={syncing} canSync={canWrite} onSync={onSyncNow} />
+
+        {selectedProject && (
+          <nav aria-label={t("adminNav.breadcrumb")} className="mb-4 flex flex-wrap items-center gap-1 text-sm text-[var(--muted)]">
+            <button
+              type="button"
+              className="hover:text-[var(--ink)]"
+              onClick={() => {
+                setEditing(null);
+                setSelectedCategory(null);
+                setSelectedProject(null);
+              }}
+            >
+              {t("adminNav.pages")}
+            </button>
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            {selectedCategory ? (
+              <button
+                type="button"
+                className="hover:text-[var(--ink)]"
+                onClick={() => {
+                  setEditing(null);
+                  setSelectedCategory(null);
+                }}
+              >
+                {selectedProject.name}
+              </button>
+            ) : (
+              <span aria-current="page" className="font-medium text-[var(--ink)]">{selectedProject.name}</span>
+            )}
+            {selectedCategory && (
+              <>
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                {editing ? (
+                  <button type="button" className="hover:text-[var(--ink)]" onClick={() => setEditing(null)}>
+                    {selectedCategory.name}
+                  </button>
+                ) : (
+                  <span aria-current="page" className="font-medium text-[var(--ink)]">{selectedCategory.name}</span>
+                )}
+              </>
+            )}
+            {selectedCategory && editing && (
+              <>
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                <span aria-current="page" className="max-w-[20rem] truncate font-medium text-[var(--ink)]">
+                  {editing.kind === "new"
+                    ? t("admin.newPage")
+                    : (pages.find((pg) => pg.slug === editing.slug && pg.language === editing.language) ??
+                        pages.find((pg) => pg.slug === editing.slug))?.title ?? editing.slug}
+                </span>
+              </>
+            )}
+          </nav>
+        )}
 
         {/* No "not connected" gate any more: there is always a content
          *  repository (a local one in the data volume when no remote is
