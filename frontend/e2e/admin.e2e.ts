@@ -188,7 +188,9 @@ test("renaming a page keeps its old address working", async ({ page }) => {
   await openPageInEditor(page, "Installing the widget");
   await page.getByRole("textbox", { name: "Title" }).fill("Setting up the widget");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  // Waits for the save itself: the button is only disabled WHILE saving,
+  // which a fast save can finish before anyone looks.
+  await expect(page.getByRole("status").filter({ hasText: /^Saved / })).toBeVisible();
   await expect
     .poll(async () => (await page.request.get("/api/public/projects/handbook/pages/installing-the-widget", { maxRedirects: 0 })).status())
     .toBe(301);
@@ -203,7 +205,9 @@ test("an unpublished page leaves the public site", async ({ page, request }) => 
   await page.getByRole("button", { name: "Published" }).click();
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("button", { name: "Draft" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  // Waits for the save itself: the button is only disabled WHILE saving,
+  // which a fast save can finish before anyone looks.
+  await expect(page.getByRole("status").filter({ hasText: /^Saved / })).toBeVisible();
 
   // A reader without a session: the editor's own browser may still see drafts.
   // Polled, because the button flips before the server has written the file.
@@ -673,4 +677,18 @@ test("categories and pages are sorted and moved by dragging", async ({ page }) =
   await expect(page.locator('[data-page-row="mains-connection"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Later" }).click();
   await expect(page.locator('[data-page-row="mains-connection"]')).toHaveCount(1);
+});
+
+test("on a phone the admin lists pages and opens the editor without sideways scrolling", async ({ page }) => {
+  await signIn(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/admin/content/handbook/getting-started");
+  // The tree steps aside for the category's pages; the path leads back.
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeHidden();
+  await page.getByText("Setting up the widget").first().click();
+  await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
+  const [scroll, inner] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+  expect(scroll).toBeLessThanOrEqual(inner);
+  await page.getByRole("navigation", { name: "Path" }).getByRole("button", { name: "Handbook" }).click();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
 });
